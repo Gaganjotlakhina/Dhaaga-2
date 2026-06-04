@@ -7,6 +7,8 @@ const other = (r) => (r === "toronto" ? "india" : "toronto");
 const $ = (id) => document.getElementById(id);
 let state = { code: localStorage.getItem("dh_code") || "", role: localStorage.getItem("dh_role") || "" };
 let map, meMarker, themMarker, partner = null, lastBuzzTs = 0;
+let thread = [];
+const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const urlB64ToUint8 = (b64) => {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
@@ -74,9 +76,12 @@ function renderApp() {
       <button class="ping" data-t="reached home safe \u2705">\u2705 Reached safe</button>
       <button class="ping" data-t="misses you \uD83D\uDC9B">\uD83D\uDC9B Miss you</button>
     </div>
-    <div style="display:flex;gap:8px"><input id="msg" placeholder="say something\u2026"/><button class="btn" id="send" style="width:auto;padding:0 18px">\u2192</button></div>`;
+    <div style="display:flex;gap:8px"><input id="msg" placeholder="say something\u2026"/><button class="btn" id="send" style="width:auto;padding:0 18px">\u2192</button></div>
+    <div style="font-size:12px;opacity:.5;margin:18px 0 8px;letter-spacing:.5px">OUR THREAD</div>
+    <div id="thread" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;padding-right:4px"></div>`;
 
   initMap();
+  renderThread();
   $("buzz").onclick = () => { sendBuzz("buzz", ROLES[state.role].who + " sent you a heartbeat \uD83D\uDC93"); flash($("buzz")); };
   document.querySelectorAll(".ping").forEach((b) => b.onclick = () => sendBuzz("ping", ROLES[state.role].who + " " + b.dataset.t));
   const send = () => { const m = $("msg").value.trim(); if (m) { sendBuzz("msg", ROLES[state.role].who + ": " + m); $("msg").value = ""; } };
@@ -93,22 +98,56 @@ function flash(el) {
 // ---------- map ----------
 function initMap() {
   const a = ROLES[state.role], b = ROLES[other(state.role)];
-  map = L.map("map", { zoomControl: false, attributionControl: false }).fitBounds([[a.lat, a.lon], [b.lat, b.lon]], { padding: [30, 30] });
+  map = L.map("map", { zoomControl: false, attributionControl: false }).setView([a.lat, a.lon], 12);
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png").addTo(map);
   const dot = (c) => L.divIcon({ className: "", html: `<div style="width:16px;height:16px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:0 0 12px ${c}"></div>` });
   meMarker = L.marker([a.lat, a.lon], { icon: dot("#ff7e5f") }).addTo(map);
   themMarker = L.marker([b.lat, b.lon], { icon: dot("#9b8cff") }).addTo(map);
+  // toggle to jump between your dot and the other person's (they're far away, so off-screen by default)
+  const Toggle = L.Control.extend({ onAdd: function () {
+    const btn = L.DomUtil.create("button");
+    btn.innerHTML = "\uD83D\uDCCD " + ROLES[other(state.role)].who;
+    btn.style.cssText = "background:#9b8cff;color:#fff;border:none;border-radius:10px;padding:6px 10px;font-size:13px;cursor:pointer";
+    let onMe = true;
+    L.DomEvent.on(btn, "click", (e) => { L.DomEvent.stop(e);
+      if (onMe) { map.setView(themMarker.getLatLng(), 11); btn.innerHTML = "\uD83D\uDCCD " + ROLES[state.role].who; }
+      else { map.setView(meMarker.getLatLng(), 14); btn.innerHTML = "\uD83D\uDCCD " + ROLES[other(state.role)].who; }
+      onMe = !onMe;
+    });
+    return btn;
+  }});
+  map.addControl(new Toggle({ position: "topright" }));
 }
 
 // ---------- networking ----------
 async function sendBuzz(kind, body) {
-  await api("buzz", { code: state.code, from: state.role, kind, body });
+  const msg = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 6), from: state.role, kind, body, ts: Date.now() };
+  thread.push(msg); renderThread();
+  await api("buzz", { code: state.code, ...msg });
 }
 
+function renderThread() {
+  const el = $("thread"); if (!el) return;
+  const sorted = [...thread].sort((a, b) => a.ts - b.ts);
+  el.innerHTML = sorted.map((m) => {
+    const mine = m.from === state.role;
+    const txt = (m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body);
+    const t = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:80%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)"><div style="font-size:14px">${txt}</div><div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
+  }).join("");
+  el.scrollTop = el.scrollHeight;
+}
+
+let centeredOnce = false;
 async function shareLocation() {
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
-    (p) => api("location", { code: state.code, role: state.role, lat: p.coords.latitude, lon: p.coords.longitude, ts: Date.now() }),
+    (p) => {
+      const lat = p.coords.latitude, lon = p.coords.longitude;
+      api("location", { code: state.code, role: state.role, lat, lon, ts: Date.now() });
+      if (meMarker) meMarker.setLatLng([lat, lon]);
+      if (map && !centeredOnce) { map.setView([lat, lon], 14); centeredOnce = true; }
+    },
     () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 }
   );
 }
@@ -120,6 +159,13 @@ async function poll() {
     themMarker.setLatLng([lat, lon]);
     const mins = Math.round((Date.now() - ts) / 60000);
     if ($("seen")) $("seen").textContent = mins < 2 ? "live now \uD83D\uDFE2" : "seen " + mins + "m ago";
+  }
+  const m = await api("messages?code=" + encodeURIComponent(state.code));
+  if (m && m.messages) {
+    const map = new Map();
+    [...thread, ...m.messages].forEach((x) => map.set(x.id, x));
+    thread = [...map.values()];
+    renderThread();
   }
 }
 

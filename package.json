@@ -1,0 +1,14 @@
+{
+  "name": "dhaaga-pwa",
+  "version": "1.0.0",
+  "description": "A PWA to stay connected across distance — buzz notifications + live location while open.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "keys": "web-push generate-vapid-keys"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "web-push": "^3.6.7"
+  }
+}

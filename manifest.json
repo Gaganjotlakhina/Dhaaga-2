@@ -1,0 +1,14 @@
+{
+  "name": "Dhaaga \u2014 the thread between you",
+  "short_name": "Dhaaga",
+  "description": "Stay connected with the people you love, across any distance.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0d0b1f",
+  "theme_color": "#e8455f",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

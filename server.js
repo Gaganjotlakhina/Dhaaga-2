@@ -15,7 +15,7 @@ if (SB_URL && SB_KEY) {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
 app.use(express.static(path.join(__dirname)));
 
 const PUBLIC = process.env.VAPID_PUBLIC, PRIVATE = process.env.VAPID_PRIVATE;
@@ -80,10 +80,17 @@ app.get("/api/messages", async (req, res) => {
 
 app.post("/api/buzz", async (req, res) => {
   const { code, from, kind, body, id, ts } = req.body || {};
-  await addMessage({ id: id || (Date.now() + "-" + Math.random().toString(36).slice(2, 6)), code, from, kind: kind || "msg", body: body || "", ts: ts || Date.now() });
+  const mid = id || (Date.now() + "-" + Math.random().toString(36).slice(2, 6));
+  if (kind === "voice") {
+    await kvSet(`voice:${code}:${mid}`, body || "");        // store the audio clip on its own
+    await addMessage({ id: mid, code, from, kind: "voice", body: "", ts: ts || Date.now() });
+  } else {
+    await addMessage({ id: mid, code, from, kind: kind || "msg", body: body || "", ts: ts || Date.now() });
+  }
   const key = `sub:${code}:${other(from)}`;
   const targets = (await kvGet(key)) || [];
-  const payload = JSON.stringify({ title: "Dhaaga \uD83D\uDC9B", body: body || "Thinking of you", kind: kind || "msg" });
+  const pushBody = kind === "voice" ? "\uD83C\uDFA4 Voice message" : (body || "Thinking of you");
+  const payload = JSON.stringify({ title: "Dhaaga \uD83D\uDC9B", body: pushBody, kind: kind || "msg" });
   const alive = [];
   await Promise.all(targets.map(async (s) => {
     try { await webpush.sendNotification(s, payload); alive.push(s); }
@@ -91,6 +98,11 @@ app.post("/api/buzz", async (req, res) => {
   }));
   if (targets.length !== alive.length) await kvSet(key, alive);
   res.json({ ok: true, delivered: alive.length });
+});
+
+app.get("/api/voice", async (req, res) => {
+  const { code, id } = req.query;
+  res.json({ audio: (await kvGet(`voice:${code}:${id}`)) || null });
 });
 
 const PORT = process.env.PORT || 3000;

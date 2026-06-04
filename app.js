@@ -70,6 +70,7 @@ function renderApp() {
     <div id="map"></div>
     <div style="display:flex;justify-content:center;margin:6px 0"><button class="buzz" id="buzz"><span style="font-size:30px">\uD83D\uDC93</span><span style="font-size:12px;font-weight:700">BUZZ</span></button></div>
     <div class="sub" style="text-align:center;margin:8px 0 14px">one tap \u2192 ${themR.who}'s phone buzzes, even if the app is closed</div>
+    <button id="talk" style="width:100%;padding:16px;border-radius:14px;border:1px solid rgba(255,255,255,.15);background:rgba(155,140,255,.18);color:#fff;font-size:15px;font-weight:700;margin-bottom:14px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none">\uD83C\uDFA4 Hold to talk</button>
     <div class="pings">
       <button class="ping" data-t="wants to call over chai \u2615">\u2615 Chai time?</button>
       <button class="ping" data-t="asked you to call \uD83D\uDCDE">\uD83D\uDCDE Call me</button>
@@ -87,6 +88,13 @@ function renderApp() {
   const send = () => { const m = $("msg").value.trim(); if (m) { sendBuzz("msg", ROLES[state.role].who + ": " + m); $("msg").value = ""; } };
   $("send").onclick = send;
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  const talk = $("talk");
+  const down = (e) => { e.preventDefault(); if (talk.dataset.rec) return; talk.dataset.rec = "1"; talk.textContent = "\uD83D\uDD34 Recording\u2026 release to send"; startRec(); };
+  const up = (e) => { e.preventDefault(); if (!talk.dataset.rec) return; delete talk.dataset.rec; talk.textContent = "\uD83C\uDFA4 Hold to talk"; stopRec(); };
+  talk.addEventListener("pointerdown", down);
+  talk.addEventListener("pointerup", up);
+  talk.addEventListener("pointerleave", up);
+  talk.addEventListener("pointercancel", up);
 }
 
 function flash(el) {
@@ -126,15 +134,59 @@ async function sendBuzz(kind, body) {
   await api("buzz", { code: state.code, ...msg });
 }
 
+// ---------- walkie-talkie (push-to-talk voice clips) ----------
+const audioCache = {};
+let mediaRecorder, recChunks = [], recStream, recTimer;
+const blobToDataUrl = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+
+async function startRec() {
+  try { recStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { const t = $("talk"); if (t) { delete t.dataset.rec; t.textContent = "\uD83C\uDFA4 Hold to talk"; } alert("Microphone permission is needed for voice messages."); return; }
+  recChunks = [];
+  let mime = "";
+  if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+  else if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
+  else if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
+  mediaRecorder = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream);
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    recStream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    if (blob.size < 1200) return; // ignore accidental taps
+    sendVoice(await blobToDataUrl(blob));
+  };
+  mediaRecorder.start();
+  recTimer = setTimeout(stopRec, 30000); // cap at 30s
+}
+function stopRec() {
+  clearTimeout(recTimer);
+  if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+}
+async function sendVoice(dataUrl) {
+  const id = Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+  audioCache[id] = dataUrl;
+  const msg = { id, from: state.role, kind: "voice", body: "", ts: Date.now() };
+  thread.push(msg); renderThread();
+  await api("buzz", { code: state.code, id, from: state.role, kind: "voice", body: dataUrl, ts: msg.ts });
+}
+async function playVoice(id) {
+  let src = audioCache[id];
+  if (!src) { const r = await api("voice?code=" + encodeURIComponent(state.code) + "&id=" + id); src = r && r.audio; if (src) audioCache[id] = src; }
+  if (src) new Audio(src).play().catch(() => {});
+}
+
 function renderThread() {
   const el = $("thread"); if (!el) return;
   const sorted = [...thread].sort((a, b) => a.ts - b.ts);
   el.innerHTML = sorted.map((m) => {
     const mine = m.from === state.role;
-    const txt = (m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body);
+    const inner = m.kind === "voice"
+      ? `<button class="voicebtn" data-id="${m.id}" style="background:none;border:none;color:inherit;font:inherit;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:14px">\u25B6\uFE0F <span>Voice message</span></button>`
+      : `<div style="font-size:14px">${(m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body)}</div>`;
     const t = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:80%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)"><div style="font-size:14px">${txt}</div><div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
+    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:80%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)">${inner}<div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
   }).join("");
+  el.querySelectorAll(".voicebtn").forEach((b) => (b.onclick = () => playVoice(b.dataset.id)));
   el.scrollTop = el.scrollHeight;
 }
 

@@ -89,11 +89,10 @@ function renderApp() {
   $("send").onclick = send;
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
   const talk = $("talk");
-  const down = (e) => { e.preventDefault(); if (talk.dataset.rec) return; talk.dataset.rec = "1"; talk.textContent = "\uD83D\uDD34 Recording\u2026 release to send"; startRec(); };
+  const down = (e) => { e.preventDefault(); if (talk.dataset.rec) return; try { talk.setPointerCapture(e.pointerId); } catch (_) {} talk.dataset.rec = "1"; talk.textContent = "\uD83D\uDD34 Recording\u2026 release to send"; startRec(); };
   const up = (e) => { e.preventDefault(); if (!talk.dataset.rec) return; delete talk.dataset.rec; talk.textContent = "\uD83C\uDFA4 Hold to talk"; stopRec(); };
   talk.addEventListener("pointerdown", down);
   talk.addEventListener("pointerup", up);
-  talk.addEventListener("pointerleave", up);
   talk.addEventListener("pointercancel", up);
 }
 
@@ -169,10 +168,22 @@ async function sendVoice(dataUrl) {
   thread.push(msg); renderThread();
   await api("buzz", { code: state.code, id, from: state.role, kind: "voice", body: dataUrl, ts: msg.ts });
 }
+let currentAudio = null, currentVoiceId = null;
 async function playVoice(id) {
+  if (currentVoiceId === id && currentAudio) { currentAudio.pause(); currentAudio = null; currentVoiceId = null; updateVoiceIcons(); return; }
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   let src = audioCache[id];
   if (!src) { const r = await api("voice?code=" + encodeURIComponent(state.code) + "&id=" + id); src = r && r.audio; if (src) audioCache[id] = src; }
-  if (src) new Audio(src).play().catch(() => {});
+  if (!src) return;
+  currentAudio = new Audio(src); currentVoiceId = id;
+  currentAudio.onended = () => { currentAudio = null; currentVoiceId = null; updateVoiceIcons(); };
+  currentAudio.play().catch(() => {});
+  updateVoiceIcons();
+}
+function updateVoiceIcons() {
+  document.querySelectorAll(".voicebtn .vico").forEach((ic) => {
+    ic.textContent = ic.parentElement.dataset.id === currentVoiceId ? "\u23F8" : "\u25B6";
+  });
 }
 
 function renderThread() {
@@ -181,12 +192,16 @@ function renderThread() {
   el.innerHTML = sorted.map((m) => {
     const mine = m.from === state.role;
     const inner = m.kind === "voice"
-      ? `<button class="voicebtn" data-id="${m.id}" style="background:none;border:none;color:inherit;font:inherit;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:14px">\u25B6\uFE0F <span>Voice message</span></button>`
+      ? `<button class="voicebtn" data-id="${m.id}" style="display:flex;align-items:center;gap:12px;background:none;border:none;color:inherit;font:inherit;cursor:pointer;padding:2px;min-width:160px;text-align:left">
+           <span class="vico" style="width:44px;height:44px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:20px;background:${mine ? "rgba(255,255,255,.28)" : "rgba(155,140,255,.4)"}">\u25B6</span>
+           <span style="font-size:14px">\uD83C\uDFA4 Voice message</span>
+         </button>`
       : `<div style="font-size:14px">${(m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body)}</div>`;
     const t = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:80%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)">${inner}<div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
+    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:84%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)">${inner}<div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
   }).join("");
   el.querySelectorAll(".voicebtn").forEach((b) => (b.onclick = () => playVoice(b.dataset.id)));
+  updateVoiceIcons();
   el.scrollTop = el.scrollHeight;
 }
 

@@ -233,7 +233,35 @@ async function poll() {
     [...thread, ...m.messages].forEach((x) => map.set(x.id, x));
     thread = [...map.values()];
     renderThread();
+    speakNewPings();
   }
+}
+
+// ---------- speak incoming pings aloud ----------
+const spokenIds = new Set();
+let threadLoaded = false;
+function speak(text) {
+  try {
+    if (!window.speechSynthesis) return;
+    const clean = (text || "").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+    if (!clean) return;
+    const u = new SpeechSynthesisUtterance(clean);
+    u.rate = 0.95;
+    speechSynthesis.speak(u);
+  } catch (_) {}
+}
+function speakNewPings() {
+  const isSpeakable = (m) => m.from !== state.role && m.kind === "ping";
+  if (!threadLoaded) {
+    // on first load, don't replay history — but if a ping just arrived (<60s), speak it
+    const latest = [...thread].filter(isSpeakable).sort((a, b) => a.ts - b.ts).pop();
+    thread.forEach((m) => spokenIds.add(m.id));
+    threadLoaded = true;
+    if (latest && Date.now() - latest.ts < 60000) speak(latest.body);
+    return;
+  }
+  thread.filter((m) => !spokenIds.has(m.id)).sort((a, b) => a.ts - b.ts)
+    .forEach((m) => { spokenIds.add(m.id); if (isSpeakable(m)) speak(m.body); });
 }
 
 // ---------- push setup ----------

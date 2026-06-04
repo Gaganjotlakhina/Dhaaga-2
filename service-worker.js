@@ -1,5 +1,5 @@
 // Dhaaga service worker — handles the buzz push notification + offline shell.
-const CACHE = "dhaaga-v5";
+const CACHE = "dhaaga-v6";
 const SHELL = ["./", "./index.html", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (e) => {

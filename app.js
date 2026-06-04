@@ -8,6 +8,7 @@ const $ = (id) => document.getElementById(id);
 let state = { code: localStorage.getItem("dh_code") || "", role: localStorage.getItem("dh_role") || "" };
 let map, meMarker, themMarker, partner = null, lastBuzzTs = 0;
 let thread = [];
+let swReg = null;
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const urlB64ToUint8 = (b64) => {
@@ -67,6 +68,7 @@ function renderApp() {
       <div class="sky ${meC.awake?'awake':'asleep'}"><div style="font-size:12.5px;font-weight:700">${meR.flag} ${meR.who}</div><div class="time">${meC.time}</div><div class="pill" style="margin-top:6px">${meC.awake?'awake now':'asleep'}</div></div>
       <div class="sky ${themC.awake?'awake':'asleep'}"><div style="font-size:12.5px;font-weight:700">${themR.flag} ${themR.who}</div><div class="time">${themC.time}</div><div class="pill" id="seen" style="margin-top:6px">${themC.awake?'awake now':'asleep'}</div></div>
     </div>
+    <button id="notifbtn" style="width:100%;padding:11px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#f4ece2;font-size:13px;margin-bottom:12px">\uD83D\uDD14 Turn on notifications</button>
     <div id="map"></div>
     <div style="display:flex;justify-content:center;margin:6px 0"><button class="buzz" id="buzz"><span style="font-size:30px">\uD83D\uDC93</span><span style="font-size:12px;font-weight:700">BUZZ</span></button></div>
     <div class="sub" style="text-align:center;margin:8px 0 14px">one tap \u2192 ${themR.who}'s phone buzzes, even if the app is closed</div>
@@ -94,6 +96,13 @@ function renderApp() {
   talk.addEventListener("pointerdown", down);
   talk.addEventListener("pointerup", up);
   talk.addEventListener("pointercancel", up);
+
+  const nb = $("notifbtn");
+  if (nb) {
+    const refreshNb = () => { nb.textContent = (window.Notification && Notification.permission === "granted") ? "\uD83D\uDD14 Notifications on \u2713 (tap to refresh)" : "\uD83D\uDD14 Turn on notifications"; };
+    refreshNb();
+    nb.onclick = async () => { nb.textContent = "\u2026"; try { if (swReg) await setupPush(swReg); } catch (_) {} refreshNb(); };
+  }
 }
 
 function flash(el) {
@@ -196,11 +205,12 @@ function renderThread() {
            <span class="vico" style="width:44px;height:44px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:20px;background:${mine ? "rgba(255,255,255,.28)" : "rgba(155,140,255,.4)"}">\u25B6</span>
            <span style="font-size:14px">\uD83C\uDFA4 Voice message</span>
          </button>`
-      : `<div style="font-size:14px">${(m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body)}</div>`;
+      : `<div class="${m.kind === "ping" ? "pingbubble" : ""}" data-text="${esc(m.body)}" style="font-size:14px${m.kind === "ping" ? ";cursor:pointer" : ""}">${(m.kind === "buzz" ? "\uD83D\uDC93 " : "") + esc(m.body)}${m.kind === "ping" ? " \uD83D\uDD0A" : ""}</div>`;
     const t = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:84%;padding:9px 13px;border-radius:16px;border-bottom-right-radius:${mine ? 4 : 16}px;border-bottom-left-radius:${mine ? 16 : 4}px;background:${mine ? "linear-gradient(135deg,#ff8a6b,#e8455f)" : "rgba(255,255,255,.08)"};border:1px solid rgba(255,255,255,.08)">${inner}<div style="font-size:10px;opacity:.65;margin-top:2px">${t}</div></div>`;
   }).join("");
   el.querySelectorAll(".voicebtn").forEach((b) => (b.onclick = () => playVoice(b.dataset.id)));
+  el.querySelectorAll(".pingbubble").forEach((b) => (b.onclick = () => speak(b.dataset.text)));
   updateVoiceIcons();
   el.scrollTop = el.scrollHeight;
 }
@@ -281,6 +291,7 @@ async function start() {
   renderApp();
   let reg = null;
   if ("serviceWorker" in navigator) { try { reg = await navigator.serviceWorker.register("service-worker.js"); } catch (e) {} }
+  swReg = reg;
   if (reg) setupPush(reg);
   shareLocation(); poll();
   setInterval(shareLocation, 30000); // refresh my location while the app is open
